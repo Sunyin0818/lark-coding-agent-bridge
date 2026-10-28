@@ -36,6 +36,7 @@ interface OmpRunState {
 
 const DEFAULT_STOP_GRACE_MS = 5000;
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
+const DRAIN_AFTER_TERMINAL_MS = 1500;
 const DIALOG_UI_METHODS = new Set(['select', 'confirm', 'input', 'editor', 'ask']);
 
 export class OmpAdapter implements AgentAdapter {
@@ -308,7 +309,20 @@ async function* createEventStream(
       state.readyTimer = undefined;
     }
     child.removeListener('exit', closeSilentStdout);
+    const terminal = translator.terminalEmitted();
+    if (terminal) {
+      try {
+        child.stdin.end();
+      } catch {
+        // best-effort graceful shutdown
+      }
+    }
     rl.close();
+    // OMP MUST keep draining stdout after stdin closes: a client that leaves
+    // the pipe unread can delay its exit indefinitely. The bridge stops
+    // consuming on the terminal event, so drain here to let OMP dispose the
+    // session before the run executor's post-done grace expires.
+    if (terminal) await drainStdout(child);
   }
 
   if (translator.terminalEmitted()) return;
@@ -407,6 +421,27 @@ function mimeTypeForPath(path: string): string {
     default:
       return 'image/png';
   }
+}
+
+async function drainStdout(child: OmpChild): Promise<void> {
+  if (child.stdout.readableEnded || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      child.stdout.removeListener('data', onData);
+      child.stdout.removeListener('end', done);
+      child.removeListener('exit', done);
+      resolve();
+    };
+    const onData = (): void => {};
+    const timer = setTimeout(done, DRAIN_AFTER_TERMINAL_MS);
+    child.stdout.on('data', onData);
+    child.stdout.once('end', done);
+    child.once('exit', done);
+    child.stdout.resume();
+  });
 }
 
 async function waitForExit(child: OmpChild, timeoutMs: number): Promise<boolean> {

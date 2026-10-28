@@ -87,6 +87,7 @@ describe('OmpAdapter process contract', () => {
     expect(record.promptMessage).toBe('hello omp');
     expect(record.images).toEqual([]);
     expect(record.env.LARK_CHANNEL).toBe('1');
+    expect(await run.waitForExit(2000)).toBe(true);
   });
 
   it('passes resume and model after the base contract', async () => {
