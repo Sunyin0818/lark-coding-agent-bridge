@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listOmpResumeHistory, ompSessionsDir } from '../../../src/session/omp-history';
 
@@ -20,9 +20,10 @@ describe('OMP resume history', () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'omp-history-'));
     dirs.push(agentDir);
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    const cwd = '/work/project';
+    const cwd = await mkdtemp(join(tmpdir(), 'omp-history-cwd-'));
+    dirs.push(cwd);
     const sessionsDir = ompSessionsDir(cwd);
-    expect(sessionsDir).toBe(join(agentDir, 'sessions', '-work-project'));
+    expect(sessionsDir).toBe(join(agentDir, 'sessions', `-tmp-${basename(cwd)}`));
     await mkdir(sessionsDir, { recursive: true });
 
     const sessionId = '01a0b4c8-1111-7222-8333-444455556666';
@@ -73,6 +74,15 @@ describe('OMP resume history', () => {
       preview: 'fix the parser',
       lineCount: 4,
     });
+  });
+
+  it('encodes home, temp, and absolute cwds the way OMP does', () => {
+    const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.omp', 'agent');
+    const suffix = (cwd: string) => ompSessionsDir(cwd).slice(join(agentDir, 'sessions').length + 1);
+
+    expect(suffix(join(homedir(), 'a', 'b'))).toBe('-a-b');
+    expect(suffix(join(tmpdir(), 'x', 'y'))).toMatch(/^-tmp-/);
+    expect(suffix('/var/tmp/z')).toBe('--var-tmp-z--');
   });
 
   it('returns an empty list when the cwd has no OMP sessions', async () => {
